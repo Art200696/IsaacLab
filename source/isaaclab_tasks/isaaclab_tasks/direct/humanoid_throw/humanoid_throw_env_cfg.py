@@ -33,6 +33,7 @@ class HumanoidThrowEnvCfg(DirectMARLEnvCfg):
     termination_height = 0.5
     ball_ground_height = 0.1
 
+
     # simulation
     sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
 
@@ -59,10 +60,12 @@ class HumanoidThrowEnvCfg(DirectMARLEnvCfg):
             radius=0.1,
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.1, 0.1)),
             physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=0.7, dynamic_friction=0.5),
+
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                kinematic_enabled=False,
+                kinematic_enabled=True,
                 disable_gravity=False,
             ),
+
             mass_props=sim_utils.MassPropertiesCfg(density=500.0),
             collision_props=sim_utils.CollisionPropertiesCfg(),
         ),

@@ -12,7 +12,9 @@ import isaaclab.sim as sim_utils
 from isaaclab.assets import Articulation, RigidObject
 from isaaclab.envs import DirectMARLEnv
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
+
 from isaaclab.utils.math import quat_apply
+
 
 from .humanoid_throw_env_cfg import HumanoidThrowEnvCfg
 
@@ -34,12 +36,14 @@ class HumanoidThrowEnv(DirectMARLEnv):
         self.dof_upper = joint_limits[..., 1]
 
         self.ball_init_pos = torch.tensor([0.0, -0.5, 1.5], dtype=torch.float, device=self.device)
+
         self.catch_radius = self.cfg.catch_radius
         self.target_separation = self.cfg.target_separation
         self.termination_height = self.cfg.termination_height
         self.last_catcher = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.num_throws = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
         self.up_axis = torch.tensor([0.0, 0.0, 1.0], dtype=torch.float, device=self.device).repeat(self.num_envs, 1)
+
 
     #
     # implementation details
@@ -130,6 +134,7 @@ class HumanoidThrowEnv(DirectMARLEnv):
             + upright_reward
             + alive_reward
         )
+
         return {"thrower": reward, "catcher": reward}
 
     def _get_dones(self) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
@@ -141,6 +146,7 @@ class HumanoidThrowEnv(DirectMARLEnv):
         thrower_fallen = thrower_pos[:, 2] < self.termination_height
         catcher_fallen = catcher_pos[:, 2] < self.termination_height
         fallen = ball_fallen | thrower_fallen | catcher_fallen
+
         terminated = {agent: fallen for agent in self.cfg.possible_agents}
         time_outs = {agent: time_out for agent in self.cfg.possible_agents}
         return terminated, time_outs
@@ -157,8 +163,10 @@ class HumanoidThrowEnv(DirectMARLEnv):
         ball_state[:, 7:] = 0
         self.ball.write_root_pose_to_sim(ball_state[:, :7], env_ids)
         self.ball.write_root_velocity_to_sim(ball_state[:, 7:], env_ids)
+
         self.last_catcher[env_ids] = 0
         self.num_throws[env_ids] = 0
+
 
 
 @torch.jit.script
