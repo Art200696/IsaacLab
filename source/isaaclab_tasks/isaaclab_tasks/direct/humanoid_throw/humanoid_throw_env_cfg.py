@@ -25,6 +25,14 @@ class HumanoidThrowEnvCfg(DirectMARLEnvCfg):
     observation_spaces = {"thrower": 48, "catcher": 48}
     state_space = 0
     vel_obs_scale = 0.1
+    catch_radius = 0.3
+    target_separation = 2.0
+    dist_reward_scale = 0.1
+    upright_reward_scale = 0.1
+    alive_reward_scale = 0.1
+    termination_height = 0.5
+    ball_ground_height = 0.1
+
 
     # simulation
     sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
@@ -52,7 +60,12 @@ class HumanoidThrowEnvCfg(DirectMARLEnvCfg):
             radius=0.1,
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(1.0, 0.1, 0.1)),
             physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=0.7, dynamic_friction=0.5),
-            rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=False),
+
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                kinematic_enabled=True,
+                disable_gravity=False,
+            ),
+
             mass_props=sim_utils.MassPropertiesCfg(density=500.0),
             collision_props=sim_utils.CollisionPropertiesCfg(),
         ),

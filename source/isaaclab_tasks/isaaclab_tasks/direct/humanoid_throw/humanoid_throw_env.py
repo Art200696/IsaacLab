@@ -13,6 +13,9 @@ from isaaclab.assets import Articulation, RigidObject
 from isaaclab.envs import DirectMARLEnv
 from isaaclab.sim.spawners.from_files import GroundPlaneCfg, spawn_ground_plane
 
+from isaaclab.utils.math import quat_apply
+
+
 from .humanoid_throw_env_cfg import HumanoidThrowEnvCfg
 
 
@@ -33,6 +36,14 @@ class HumanoidThrowEnv(DirectMARLEnv):
         self.dof_upper = joint_limits[..., 1]
 
         self.ball_init_pos = torch.tensor([0.0, -0.5, 1.5], dtype=torch.float, device=self.device)
+
+        self.catch_radius = self.cfg.catch_radius
+        self.target_separation = self.cfg.target_separation
+        self.termination_height = self.cfg.termination_height
+        self.last_catcher = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self.num_throws = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        self.up_axis = torch.tensor([0.0, 0.0, 1.0], dtype=torch.float, device=self.device).repeat(self.num_envs, 1)
+
 
     #
     # implementation details
@@ -83,15 +94,59 @@ class HumanoidThrowEnv(DirectMARLEnv):
 
     def _get_rewards(self) -> dict[str, torch.Tensor]:
         ball_pos = self.ball.data.root_pos_w
-        goal = self.catcher.data.root_pos_w + torch.tensor([0.0, 0.5, 1.0], device=self.device)
-        dist = torch.norm(ball_pos - goal, dim=-1)
-        reward = 1.0 - torch.tanh(dist)
+        thrower_root = self.thrower.data.root_pos_w
+        catcher_root = self.catcher.data.root_pos_w
+        thrower_goal = thrower_root + torch.tensor([0.0, 0.5, 1.0], device=self.device)
+        catcher_goal = catcher_root + torch.tensor([0.0, 0.5, 1.0], device=self.device)
+        dist_thrower = torch.norm(ball_pos - thrower_goal, dim=-1)
+        dist_catcher = torch.norm(ball_pos - catcher_goal, dim=-1)
+
+        last_holder = self.last_catcher.clone()
+        catch_thrower = dist_thrower < self.catch_radius
+        catch_catcher = dist_catcher < self.catch_radius
+        self.last_catcher = torch.where(catch_thrower, torch.zeros_like(self.last_catcher), self.last_catcher)
+        self.last_catcher = torch.where(catch_catcher, torch.ones_like(self.last_catcher), self.last_catcher)
+        new_catch = ((last_holder == 0) & catch_catcher) | ((last_holder == 1) & catch_thrower)
+        self.num_throws += new_catch.float()
+        throws_reward = new_catch.float()
+
+        goal_dist = torch.where(last_holder == 0, dist_catcher, dist_thrower)
+        approach_reward = 1.0 - torch.tanh(goal_dist)
+
+        separation = torch.norm(thrower_root - catcher_root, dim=-1)
+        distance_reward = 1.0 - torch.tanh(torch.abs(separation - self.target_separation))
+
+        thrower_up = quat_apply(self.thrower.data.root_quat_w, self.up_axis)[..., 2]
+        catcher_up = quat_apply(self.catcher.data.root_quat_w, self.up_axis)[..., 2]
+        upright = 0.5 * (thrower_up + catcher_up).clamp(min=0.0)
+        upright_reward = self.cfg.upright_reward_scale * upright
+
+        ball_fallen = ball_pos[:, 2] < self.cfg.ball_ground_height
+        thrower_fallen = thrower_root[:, 2] < self.termination_height
+        catcher_fallen = catcher_root[:, 2] < self.termination_height
+        alive = ~(ball_fallen | thrower_fallen | catcher_fallen)
+        alive_reward = self.cfg.alive_reward_scale * alive.float()
+
+        reward = (
+            approach_reward
+            + throws_reward
+            + self.cfg.dist_reward_scale * distance_reward
+            + upright_reward
+            + alive_reward
+        )
+
         return {"thrower": reward, "catcher": reward}
 
     def _get_dones(self) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         time_out = self.episode_length_buf >= self.max_episode_length - 1
         ball_pos = self.ball.data.root_pos_w
-        fallen = ball_pos[:, 2] < 0.2
+        thrower_pos = self.thrower.data.root_pos_w
+        catcher_pos = self.catcher.data.root_pos_w
+        ball_fallen = ball_pos[:, 2] < self.cfg.ball_ground_height
+        thrower_fallen = thrower_pos[:, 2] < self.termination_height
+        catcher_fallen = catcher_pos[:, 2] < self.termination_height
+        fallen = ball_fallen | thrower_fallen | catcher_fallen
+
         terminated = {agent: fallen for agent in self.cfg.possible_agents}
         time_outs = {agent: time_out for agent in self.cfg.possible_agents}
         return terminated, time_outs
@@ -108,6 +163,10 @@ class HumanoidThrowEnv(DirectMARLEnv):
         ball_state[:, 7:] = 0
         self.ball.write_root_pose_to_sim(ball_state[:, :7], env_ids)
         self.ball.write_root_velocity_to_sim(ball_state[:, 7:], env_ids)
+
+        self.last_catcher[env_ids] = 0
+        self.num_throws[env_ids] = 0
+
 
 
 @torch.jit.script
